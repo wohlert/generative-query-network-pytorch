@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 
 from gqn import GenerativeQueryNetwork
-from data import ShepardMetzler, Scene
+from shepardmetzler import ShepardMetzler, Scene
 
 cuda = torch.cuda.is_available()
 device = torch.device("cuda:0" if cuda else "cpu")
@@ -62,7 +62,7 @@ if __name__ == '__main__':
     gradient_steps, max_steps = 0, 2*10**6
     
     for epoch in range(args.epochs):
-        if gradient_steps >= max_steps
+        if gradient_steps >= max_steps:
             torch.save(model, "model-final.pt")
             break
 

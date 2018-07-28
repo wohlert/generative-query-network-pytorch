@@ -1,5 +1,4 @@
-import collections
-import os, io
+import collections, os, io
 from PIL import Image
 import torch
 from torchvision.transforms import ToTensor

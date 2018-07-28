@@ -2,15 +2,14 @@ import torch
 import torch.nn as nn
 from torch.distributions import Normal
 
-from representation import RepresentationNetwork
-from generator import GeneratorNetwork
+from .representation import RepresentationNetwork
+from .generator import GeneratorNetwork
 
 
-def _transform_viewpoint(x, v):
+def _transform_viewpoint(v):
         """
         Transforms the viewpoint vector into a consistent
-        representation and merges batch and M dimensions
-        of the data.
+        representation
         """
         w, z = torch.split(v, 3, dim=-1)
         y, p = torch.split(z, 1, dim=-1)
@@ -19,14 +18,22 @@ def _transform_viewpoint(x, v):
         view_vector = [w, torch.cos(y), torch.sin(y), torch.cos(p), torch.sin(p)]
         v_hat = torch.cat(view_vector, dim=-1)
 
+        return v_hat
+
+
+def _flatten(x, v):
+        """
+        Merges batch and M dimensions
+        of the data.
+        """
         # Reshape along batch dimension
         _, _, *x_dims = x.size()
-        _, _, *v_dims = v_hat.size()
+        _, _, *v_dims = v.size()
 
         x = x.view((-1, *x_dims))
-        v_hat = v_hat.view((-1, *v_dims))
+        v = v.view((-1, *v_dims))
 
-        return x, v_hat
+        return x, v
 
 
 class GenerativeQueryNetwork(nn.Module):
@@ -46,7 +53,7 @@ class GenerativeQueryNetwork(nn.Module):
         super(GenerativeQueryNetwork, self).__init__()
         self.r_dim = r_dim
 
-        self.generator = GeneratorNetwork(x_dim, v_dim, r_dim, z_dim, h_dim, L)
+        self.generator = GeneratorNetwork(x_dim, v_dim + 2, r_dim, z_dim, h_dim, L)
         self.representation = RepresentationNetwork(x_dim, v_dim + 2)
 
     def forward(self, images, viewpoints, sigma):
@@ -61,16 +68,17 @@ class GenerativeQueryNetwork(nn.Module):
         m, batch_size, *_ = viewpoints.size()
         m = m - 1
 
-        # Split data into representation and query
-        x, v = images[:m], viewpoints[:m]
-        x_q, v_q = images[m], viewpoints[m]
-
         # Transform data for representation
-        x, v_hat = _transform_viewpoint(x, v)
+        viewpoints = _transform_viewpoint(viewpoints)
+
+        # Split data into representation and query
+        x, x_q = images[:-1], images[-1]
+        v, v_q = viewpoints[:-1], viewpoints[-1]
 
         # representation generated from input images
         # and corresponding viewpoints.
-        phi = self.representation(x, v_hat)
+        x, v = _flatten(x, v)
+        phi = self.representation(x, v)
         phi = phi.view(m, batch_size, -1)
 
         # sum over representations
