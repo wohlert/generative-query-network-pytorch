@@ -19,7 +19,7 @@ representation architecture along with the generative model that is
 similar to the one described in "Towards conceptual compression" by
 Gregor et al.
 
-![](https://i.makeagif.com/media/11-22-2016/EIXCEn.gif)
+![](https://kevinzakka.github.io/assets/rnn/draw2.gif)
 
 Additionally, this repository also contains implementations of the **DRAW
 model and the ConvolutionalDRAW** model both described by Gregor et al.
