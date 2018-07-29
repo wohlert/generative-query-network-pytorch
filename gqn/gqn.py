@@ -1,39 +1,11 @@
+import random
+
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
 
-from .representation import RepresentationNetwork
+from .representation import TowerRepresentation, PyramidRepresentation
 from .generator import GeneratorNetwork
-
-
-def _transform_viewpoint(v):
-        """
-        Transforms the viewpoint vector into a consistent
-        representation
-        """
-        w, z = torch.split(v, 3, dim=-1)
-        y, p = torch.split(z, 1, dim=-1)
-
-        # position, [yaw, pitch]
-        view_vector = [w, torch.cos(y), torch.sin(y), torch.cos(p), torch.sin(p)]
-        v_hat = torch.cat(view_vector, dim=-1)
-
-        return v_hat
-
-
-def _flatten(x, v):
-        """
-        Merges batch and M dimensions
-        of the data.
-        """
-        # Reshape along batch dimension
-        _, _, *x_dims = x.size()
-        _, _, *v_dims = v.size()
-
-        x = x.view((-1, *x_dims))
-        v = v.view((-1, *v_dims))
-
-        return x, v
 
 
 class GenerativeQueryNetwork(nn.Module):
@@ -53,52 +25,78 @@ class GenerativeQueryNetwork(nn.Module):
         super(GenerativeQueryNetwork, self).__init__()
         self.r_dim = r_dim
 
-        self.generator = GeneratorNetwork(x_dim, v_dim + 2, r_dim, z_dim, h_dim, L)
-        self.representation = RepresentationNetwork(x_dim, v_dim + 2)
+        self.generator = GeneratorNetwork(x_dim, v_dim, r_dim, z_dim, h_dim, L)
+        self.representation = TowerRepresentation(x_dim, v_dim, r_dim, pool=True)
+        #self.representation = PyramidRepresentation(x_dim, v_dim, r_dim)
 
-    def forward(self, images, viewpoints, sigma):
+    def forward(self, images, viewpoints):
         """
         Forward through the GQN.
 
         :param images: batch of images [b, m, c, h, w]
         :param viewpoints: batch of viewpoints for image [b, m, k]
-        :param sigma: pixel variance
         """
         # Number of context datapoints to use for representation
-        m, batch_size, *_ = viewpoints.size()
-        m = m - 1
+        batch_size, m, *_ = viewpoints.size()
 
-        # Transform data for representation
-        viewpoints = _transform_viewpoint(viewpoints)
+        # Sample random number of views and generate representation
+        n_views = random.randint(2, m-1)
 
-        # Split data into representation and query
-        x, x_q = images[:-1], images[-1]
-        v, v_q = viewpoints[:-1], viewpoints[-1]
+        indices = torch.randperm(m)
+        representation_idx, query_idx = indices[:n_views], indices[n_views]
+
+        x, v = images[:, representation_idx], viewpoints[:, representation_idx]
+
+        # Merge batch and view dimensions.
+        _, _, *x_dims = x.size()
+        _, _, *v_dims = v.size()
+
+        x = x.view((-1, *x_dims))
+        v = v.view((-1, *v_dims))
 
         # representation generated from input images
-        # and corresponding viewpoints.
-        x, v = _flatten(x, v)
+        # and corresponding viewpoints
         phi = self.representation(x, v)
-        phi = phi.view(m, batch_size, -1)
 
-        # sum over representations
-        r = torch.sum(phi, dim=0)
+        # Seperate batch and view dimensions
+        _, *phi_dims = phi.size()
+        phi = phi.view((batch_size, n_views, *phi_dims))
 
-        # Inference q(z|x, v, r) (1.5)
-        # Prior π(z|v, r)
-        # Generator g(x|z, v, r) (1.4)
+        # sum over view representations
+        r = torch.sum(phi, dim=1)
+
+        # Use random (image, viewpoint) pair in batch as query
+        x_q, v_q = images[:, query_idx], viewpoints[:, query_idx]
         x_mu, kl = self.generator(x_q, v_q, r)
 
-        # Draw a sample from generative density
-        x_sample = Normal(x_mu, sigma).rsample()
+        # Return reconstruction and query viewpoint
+        # for computing error
+        return [x_mu, x_q, r, kl]
 
-        # ELBO is given by log likelihood of data
-        # (reconstruction error) E(x_sample, x) and
-        # KL-divergence between conditional prior
-        # and variational distribution
-        return [x_sample, x_q, r, kl]
+    def sample(self, context_x, context_v, viewpoint, sigma):
+        """
+        Sample from the network given some context and viewpoint.
 
-    def sample(self, x_shape, v, r, sigma):
-        x_mu = self.generator.sample(x_shape, v, r)
+        :param context_x: set of context images to generate representation
+        :param context_v: viewpoints of `context_x`
+        :param viewpoint: viewpoint to generate image from
+        :param sigma: pixel variance
+        """
+        batch_size, n_views, _, h, w = context_x.size()
+        
+        _, _, *x_dims = context_x.size()
+        _, _, *v_dims = context_v.size()
+
+        x = context_x.view((-1, *x_dims))
+        v = context_v.view((-1, *v_dims))
+
+        phi = self.representation(x, v)
+
+        _, *phi_dims = phi.size()
+        phi = phi.view((batch_size, n_views, *phi_dims))
+
+        r = torch.sum(phi, dim=1)
+
+        x_mu = self.generator.sample((h, w), viewpoint, r)
         x_sample = Normal(x_mu, sigma).sample()
         return x_sample

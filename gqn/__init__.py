@@ -1,3 +1,3 @@
 from .generator import GeneratorNetwork
-from .representation import RepresentationNetwork
+from .representation import TowerRepresentation, PyramidRepresentation
 from .gqn import GenerativeQueryNetwork
