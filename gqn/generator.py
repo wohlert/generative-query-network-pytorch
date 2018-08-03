@@ -134,9 +134,6 @@ class GeneratorNetwork(nn.Module):
             p_mu, p_std = torch.split(o, self.z_dim, dim=1)
             prior_distribution = Normal(p_mu, F.softplus(p_std))
 
-            # Prior sample
-            # z = prior_distribution.rsample()
-
             # Inference state update
             hidden_i, cell_i = self.inference_core(torch.cat([hidden_g, x, v, r], dim=1), [hidden_i, cell_i])
 
@@ -157,7 +154,7 @@ class GeneratorNetwork(nn.Module):
 
         x_mu = self.observation_density(u)
 
-        return x_mu, kl
+        return F.sigmoid(x_mu), kl
 
     def sample(self, x_shape, v, r):
         """
@@ -183,10 +180,9 @@ class GeneratorNetwork(nn.Module):
         u = v.new_zeros((batch_size, self.h_dim, h, w))
 
         for _ in range(self.L):
-            # Prior factor (eta π network)
             o = self.prior_density(hidden_g)
             p_mu, p_log_std = torch.split(o, self.z_dim, dim=1)
-            prior_distribution = Normal(p_mu, torch.exp(p_log_std))
+            prior_distribution = Normal(p_mu, F.softplus(p_log_std))
 
             # Prior sample
             z = prior_distribution.sample()
@@ -197,4 +193,4 @@ class GeneratorNetwork(nn.Module):
 
         x_mu = self.observation_density(u)
         
-        return x_mu
+        return F.sigmoid(x_mu)
