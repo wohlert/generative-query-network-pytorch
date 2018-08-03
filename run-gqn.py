@@ -18,29 +18,15 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 
 from gqn import GenerativeQueryNetwork
-from shepardmetzler import ShepardMetzler, Scene
+from shepardmetzler import ShepardMetzler, Scene, transform_viewpoint
 
 cuda = torch.cuda.is_available()
 device = torch.device("cuda:0" if cuda else "cpu")
 
-def transform_viewpoint(v):
-    """
-    Transforms the viewpoint vector into a consistent
-    representation
-    """
-    w, z = torch.split(v, 3, dim=-1)
-    y, p = torch.split(z, 1, dim=-1)
-
-    # position, [yaw, pitch]
-    view_vector = [w, torch.cos(y), torch.sin(y), torch.cos(p), torch.sin(p)]
-    v_hat = torch.cat(view_vector, dim=-1)
-
-    return v_hat
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generative Query Network on Shepard Metzler Example')
-    parser.add_argument('--epochs', type=int, default=10000, help='number of epochs to train (default: 10000)')
+    parser.add_argument('--gradient_steps', type=int, default=2*(10**6), help='number of gradient steps to run (default: 2 million)')
     parser.add_argument('--batch_size', type=int, default=36, help='size of batch (default: 36)')
     parser.add_argument('--data_dir', type=str, help='location of training data', default="train")
     parser.add_argument('--workers', type=int, help='number of data loading workers', default=2)
@@ -71,7 +57,13 @@ if __name__ == '__main__':
     kwargs = {'num_workers': args.workers, 'pin_memory': True} if cuda else {}
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, **kwargs)
     
-    for epoch in range(args.epochs):
+    # Number of gradient steps
+    s = 0
+    while True:
+        if s >= args.gradient_steps:
+            torch.save(model, "model-final.pt")
+            break
+
         for x, v in tqdm(loader):
             if args.fp16:
                 x, v = x.half(), v.half()
@@ -96,26 +88,27 @@ if __name__ == '__main__':
 
             optimizer.step()
             optimizer.zero_grad()
+
+            s += 1
+
+            # Keep a checkpoint every 100,000 steps
+            if s % 100000 == 0:
+                torch.save(model, "model-{}.pt".format(s))
         
         with torch.no_grad():
-            print("Epoch: {} |ELBO\t{} |NLL\t{} |KL\t{}".format(epoch, elbo.item(), reconstruction.item(), kl_divergence.item()))
+            print("|Steps: {}\t|NLL: {}\t|KL: {}\t|".format(s, reconstruction.item(), kl_divergence.item()))
 
-            if epoch % 5 == 0:
-                x, v = next(iter(loader))
-                x, v = x.to(device), v.to(device)
+            x, v = next(iter(loader))
+            x, v = x.to(device), v.to(device)
 
-                x_mu, _, r, _ = model(x, v)
+            x_mu, _, r, _ = model(x, v)
 
-                r = r.view(-1, 1, 16, 16)
+            r = r.view(-1, 1, 16, 16)
 
-                save_image(r.float(), "representation-{}.jpg".format(epoch))
-                save_image(x_mu.float(), "reconstruction-{}.jpg".format(epoch))
-
-            if epoch % 10 == 0:
-                torch.save(model, "model-{}.pt".format(epoch))
+            save_image(r.float(), "representation.jpg")
+            save_image(x_mu.float(), "reconstruction.jpg")
 
             # Anneal learning rate
-            s = epoch + 1
             mu = max(mu_f + (mu_i - mu_f)*(1 - s/(1.6 * 10**6)), mu_f)
             optimizer.lr = mu * math.sqrt(1 - 0.999**s)/(1 - 0.9**s)
 

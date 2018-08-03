@@ -8,6 +8,21 @@ Context = collections.namedtuple('Context', ['frames', 'cameras'])
 Scene = collections.namedtuple('Scene', ['frames', 'cameras'])
 
 
+def transform_viewpoint(v):
+    """
+    Transforms the viewpoint vector into a consistent
+    representation
+    """
+    w, z = torch.split(v, 3, dim=-1)
+    y, p = torch.split(z, 1, dim=-1)
+
+    # position, [yaw, pitch]
+    view_vector = [w, torch.cos(y), torch.sin(y), torch.cos(p), torch.sin(p)]
+    v_hat = torch.cat(view_vector, dim=-1)
+
+    return v_hat
+
+
 class ShepardMetzler(Dataset):
     def __init__(self, root_dir, transform=None, target_transform=None):
         self.root_dir = root_dir

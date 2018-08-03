@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 class TowerRepresentation(nn.Module):
-    def __init__(self, n_channels=3, v_dim=7, r_dim=256, pool=True):
+    def __init__(self, n_channels, v_dim, r_dim=256, pool=True):
         """
         Network that generates a condensed representation
         vector from a joint input of image and viewpoint.
@@ -68,7 +68,7 @@ class TowerRepresentation(nn.Module):
 
 
 class PyramidRepresentation(nn.Module):
-    def __init__(self, n_channels=3, v_dim=7, r_dim=256, pool=True):
+    def __init__(self, n_channels, v_dim, r_dim=256):
         """
         Network that generates a condensed representation
         vector from a joint input of image and viewpoint.
