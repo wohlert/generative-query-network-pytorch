@@ -56,7 +56,7 @@ if __name__ == '__main__':
     # Load the dataset
     kwargs = {'num_workers': args.workers, 'pin_memory': True} if cuda else {}
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, **kwargs)
-    
+
     # Number of gradient steps
     s = 0
     while True:
@@ -78,7 +78,7 @@ if __name__ == '__main__':
 
             # Negative log likelihood
             nll = -Normal(x_mu, sigma).log_prob(x_q)
-            
+
             reconstruction = torch.mean(nll.view(batch_size, -1), dim=0).sum()
             kl_divergence  = torch.mean(kld.view(batch_size, -1), dim=0).sum()
 
@@ -94,7 +94,7 @@ if __name__ == '__main__':
             # Keep a checkpoint every 100,000 steps
             if s % 100000 == 0:
                 torch.save(model, "model-{}.pt".format(s))
-        
+
         with torch.no_grad():
             print("|Steps: {}\t|NLL: {}\t|KL: {}\t|".format(s, reconstruction.item(), kl_divergence.item()))
 
@@ -110,7 +110,8 @@ if __name__ == '__main__':
 
             # Anneal learning rate
             mu = max(mu_f + (mu_i - mu_f)*(1 - s/(1.6 * 10**6)), mu_f)
-            optimizer.lr = mu * math.sqrt(1 - 0.999**s)/(1 - 0.9**s)
+            for group in optimizer.param_groups:
+                group["lr"] = mu * math.sqrt(1 - 0.999**s)/(1 - 0.9**s)
 
             # Anneal pixel variance
             sigma = max(sigma_f + (sigma_i - sigma_f)*(1 - s/(2 * 10**5)), sigma_f)
