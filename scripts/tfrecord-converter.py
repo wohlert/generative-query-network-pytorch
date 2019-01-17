@@ -4,6 +4,9 @@ tfrecord-converter
 Takes a directory of tf-records with Shepard-Metzler data
 and converts it into a number of gzipped PyTorch records
 with a fixed batch size.
+
+Thanks to l3robot and versatran01 for providing initial
+scripts.
 """
 import os, gzip, torch
 import tensorflow as tf, numpy as np, multiprocessing as mp

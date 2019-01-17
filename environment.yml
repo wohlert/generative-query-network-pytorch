@@ -1,0 +1,45 @@
+name: gqn
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - _tflow_1100_select=0.0.1=gpu
+  - _tflow_190_select=0.0.3=mkl
+  - blas=1.0=mkl
+  - cffi=1.11.5=py35he75722e_1
+  - cudatoolkit=9.0=h13b8566_0
+  - cudnn=7.1.2=cuda9.0_0
+  - cupti=9.0.176=0
+  - glib=2.56.2=hd408876_0
+  - intel-openmp=2019.0=117
+  - libffi=3.2.1=hd88cf55_4
+  - libgcc-ng=8.2.0=hdf63c60_1
+  - libgfortran-ng=7.3.0=hdf63c60_0
+  - libprotobuf=3.6.0=hdbcaa40_0
+  - mkl=2018.0.3=1
+  - mkl_fft=1.0.6=py35h7dd41cf_0
+  - mkl_random=1.0.1=py35h4414c95_1
+  - nccl=1.3.5=cuda9.0_0
+  - numpy=1.15.2=py35h1d66e8a_0
+  - numpy-base=1.15.2=py35h81de0dd_0
+  - pip=10.0.1=py35_0
+  - protobuf=3.6.0=py35hf484d3e_0
+  - python=3.5.6=hc3d631a_0
+  - setuptools=40.2.0=py35_0
+  - six=1.11.0=py35_1
+  - tensorboard=1.10.0=py35hf484d3e_0
+  - tensorflow=1.10.0=gpu_py35h566a776_0
+  - tensorflow-base=1.10.0=gpu_py35h6ecc378_0
+  - tensorflow-gpu=1.10.0=hf154084_0
+  - ignite=0.1.1=py35_0
+  - pytorch=1.0.0=py3.5_cuda9.0.176_cudnn7.4.1_1
+  - pytorch-nightly=1.0.0.dev20181010=py3.5_cuda9.0.176_cudnn7.1.2_0
+  - torchvision=0.2.1=py_2
+  - pip:
+    - nvidia-ml-py==375.53.1
+    - nvidia-ml-py3==7.352.0
+    - pytorch-ignite==0.1.1
+    - tensorboardx==1.6
+    - torch==1.0.0
+prefix: ~/.conda/envs/gqn
+

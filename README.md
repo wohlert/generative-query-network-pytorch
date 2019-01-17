@@ -9,12 +9,16 @@ described in the paper look at the article by [DeepMind](https://deepmind.com/bl
 
 The current implementation generalises to any of the datasets described
 in the paper. However, currently, *only the Shepard-Metzler dataset* has
-been implemented. To use this dataset you must download the [tf-records
-from DeepMind](https://github.com/deepmind/gqn-datasets) and convert them to PyTorch tensors,
-such as by using the [gqn_datasets_translator](https://github.com/l3robot/gqn_datasets_translator).
+been implemented. To use this dataset you can use the provided script in
+```
+sh scripts/data.sh data-dir batch-size
+```
 
 The model can be trained in full by in accordance to the paper by running the
-script `run-gqn.py`.
+file `run-gqn.py` or by using the provided training script
+```
+sh scripts/gpu.sh data-dir
+```
 
 ## Implementation
 
@@ -26,11 +30,3 @@ generative model that is similar to the one described in
 Additionally, this repository also contains implementations of the **DRAW
 model and the ConvolutionalDRAW** model both described by Gregor et al.
 
-## Contributing
-
-The best way to contribute to this project is to train the model as described
-in the paper (by running `run-gqn.py`) and submitting a pull request with the 
-fully trained model.
-
-Currently, the repository contains a model `model-final.pt` that has only
-been trained on a subset of the data.
