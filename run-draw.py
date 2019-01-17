@@ -50,7 +50,7 @@ if __name__ == '__main__':
             x = x.view(batch_size, -1).to(device)
 
             x_hat, kl_divergence = model(x)
-            x_hat = F.sigmoid(x_hat)
+            x_hat = torch.sigmoid(x_hat)
             
             reconstruction = loss(x_hat, x).sum(1)
             kl = kl_divergence.sum(1)

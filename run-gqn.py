@@ -2,116 +2,175 @@
 run-gqn.py
 
 Script to train the a GQN on the Shepard-Metzler dataset
-in accordance to the hyperparamter settings described in
+in accordance to the hyperparameter settings described in
 the supplementary materials of the paper.
 """
-import sys
 import random
 import math
-import argparse
-from tqdm import tqdm
+from argparse import ArgumentParser
 
+# Torch
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
 from torch.utils.data import DataLoader
-from torchvision.utils import save_image
+from torchvision.utils import make_grid
 
-from gqn import GenerativeQueryNetwork
-from shepardmetzler import ShepardMetzler, Scene, transform_viewpoint
+# TensorboardX
+from tensorboardX import SummaryWriter
+
+# Ignite
+from ignite.contrib.handlers import ProgressBar
+from ignite.engine import Engine, Events
+from ignite.handlers import ModelCheckpoint, Timer
+from ignite.metrics import RunningAverage
+
+from gqn import GenerativeQueryNetwork, partition, Annealer
+from shepardmetzler import ShepardMetzler
 
 cuda = torch.cuda.is_available()
 device = torch.device("cuda:0" if cuda else "cpu")
 
+# Random seeding
+random.seed(99)
+torch.manual_seed(99)
+if cuda: torch.cuda.manual_seed(99)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Generative Query Network on Shepard Metzler Example')
-    parser.add_argument('--gradient_steps', type=int, default=2*(10**6), help='number of gradient steps to run (default: 2 million)')
-    parser.add_argument('--batch_size', type=int, default=36, help='size of batch (default: 36)')
-    parser.add_argument('--data_dir', type=str, help='location of training data', default="train")
+    parser = ArgumentParser(description='Generative Query Network on Shepard Metzler Example')
+    parser.add_argument('--n_epochs', type=int, default=500, help='number of epochs run (default: 500)')
+    parser.add_argument('--batch_size', type=int, default=1, help='multiple of batch size (default: 1)')
+    parser.add_argument('--data_dir', type=str, help='location of data', default="train")
+    parser.add_argument('--log_dir', type=str, help='location of logging', default="log")
     parser.add_argument('--workers', type=int, help='number of data loading workers', default=2)
-    parser.add_argument('--fp16', type=bool, help='whether to use FP16 (default: False)', default=False)
     parser.add_argument('--data_parallel', type=bool, help='whether to parallelise based on data (default: False)', default=False)
-
     args = parser.parse_args()
-
-    dataset = ShepardMetzler(root_dir=args.data_dir, target_transform=transform_viewpoint)
-
-    # Pixel variance
-    sigma_f, sigma_i = 0.7, 2.0
-
-    # Learning rate
-    mu_f, mu_i = 5*10**(-5), 5*10**(-4)
-    mu, sigma = mu_f, sigma_f
 
     # Create model and optimizer
     model = GenerativeQueryNetwork(x_dim=3, v_dim=7, r_dim=256, h_dim=128, z_dim=64, L=12).to(device)
-
-    # Model optimisations
     model = nn.DataParallel(model) if args.data_parallel else model
-    model = model.half() if args.fp16 else model
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=mu)
+    optimizer = torch.optim.Adam(model.parameters(), lr=5 * 10 ** (-4))
+
+    # Rate annealing schemes
+    sigma_scheme = Annealer(2.0, 0.7, 2 * 10 ** 5)
+    mu_scheme = Annealer(5 * 10 ** (-4), 5 * 10 ** (-5), 1.6 * 10 ** 6)
 
     # Load the dataset
+    train_dataset = ShepardMetzler(root_dir=args.data_dir)
+    valid_dataset = ShepardMetzler(root_dir=args.data_dir, train=False)
+
     kwargs = {'num_workers': args.workers, 'pin_memory': True} if cuda else {}
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, **kwargs)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, **kwargs)
+    valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=True, **kwargs)
 
-    # Number of gradient steps
-    s = 0
-    while True:
-        if s >= args.gradient_steps:
-            torch.save(model, "model-final.pt")
-            break
+    def step(engine, batch):
+        x, v = batch
+        x, v = x.to(device), v.to(device)
+        x, v, x_q, v_q = partition(x, v)
 
-        for x, v in tqdm(loader):
-            if args.fp16:
-                x, v = x.half(), v.half()
+        # Reconstruction, representation and divergence
+        x_mu, _, kl = model(x, v, x_q, v_q)
 
-            x = x.to(device)
-            v = v.to(device)
+        # Log likelihood
+        sigma = next(sigma_scheme)
+        ll = Normal(x_mu, sigma).log_prob(x_q)
 
-            x_mu, x_q, r, kld = model(x, v)
+        likelihood     = torch.mean(torch.sum(ll, dim=[1, 2, 3]))
+        kl_divergence  = torch.mean(torch.sum(kl, dim=[1, 2, 3]))
 
-            # If more than one GPU we must take new shape into account
-            batch_size = x_q.size(0)
+        # Evidence lower bound
+        elbo = likelihood - kl_divergence
+        loss = -elbo
+        loss.backward()
 
-            # Negative log likelihood
-            nll = -Normal(x_mu, sigma).log_prob(x_q)
-
-            reconstruction = torch.mean(nll.view(batch_size, -1), dim=0).sum()
-            kl_divergence  = torch.mean(kld.view(batch_size, -1), dim=0).sum()
-
-            # Evidence lower bound
-            elbo = reconstruction + kl_divergence
-            elbo.backward()
-
-            optimizer.step()
-            optimizer.zero_grad()
-
-            s += 1
-
-            # Keep a checkpoint every 100,000 steps
-            if s % 100000 == 0:
-                torch.save(model, "model-{}.pt".format(s))
+        optimizer.step()
+        optimizer.zero_grad()
 
         with torch.no_grad():
-            print("|Steps: {}\t|NLL: {}\t|KL: {}\t|".format(s, reconstruction.item(), kl_divergence.item()))
+            # Anneal learning rate
+            mu = next(mu_scheme)
+            i = engine.state.iteration
+            for group in optimizer.param_groups:
+                group["lr"] = mu * math.sqrt(1 - 0.999 ** i) / (1 - 0.9 ** i)
 
-            x, v = next(iter(loader))
+        return {"elbo": elbo.item(), "kl": kl_divergence.item(), "sigma": sigma, "mu": mu}
+
+    # Trainer and metrics
+    trainer = Engine(step)
+    metric_names = ["elbo", "kl", "sigma", "mu"]
+    metrics = [RunningAverage(output_transform=lambda x: x[m]).attach(trainer, m) for m in metric_names]
+    ProgressBar().attach(trainer, metric_names=metric_names)
+
+    # Model checkpointing
+    checkpoint_handler = ModelCheckpoint("./", "checkpoint", save_interval=1, n_saved=3,
+                                         require_empty=False)
+    trainer.add_event_handler(event_name=Events.EPOCH_COMPLETED, handler=checkpoint_handler,
+                              to_save={'model': model.state_dict, 'optimizer': optimizer.state_dict,
+                                       'annealers': (sigma_scheme.data, mu_scheme.data)})
+
+    timer = Timer(average=True).attach(trainer, start=Events.EPOCH_STARTED, resume=Events.ITERATION_STARTED,
+                 pause=Events.ITERATION_COMPLETED, step=Events.ITERATION_COMPLETED)
+
+    # Tensorbard writer
+    writer = SummaryWriter(log_dir=args.log_dir)
+
+    @trainer.on(Events.ITERATION_COMPLETED)
+    def log_metrics(engine):
+        for key, value in engine.state.metrics.items():
+            writer.add_scalar("training/{}".format(key), value, engine.state.iteration)
+
+    @trainer.on(Events.EPOCH_COMPLETED)
+    def save_images(engine):
+        with torch.no_grad():
+            x, v = engine.state.batch
             x, v = x.to(device), v.to(device)
+            x, v, x_q, v_q = partition(x, v)
 
-            x_mu, _, r, _ = model(x, v)
+            x_mu, r, _ = model(x, v, x_q, v_q)
 
             r = r.view(-1, 1, 16, 16)
 
-            save_image(r.float(), "representation.jpg")
-            save_image(x_mu.float(), "reconstruction.jpg")
+            # Send to CPU
+            x_mu = x_mu.detach().cpu().float()
+            r = r.detach().cpu().float()
 
-            # Anneal learning rate
-            mu = max(mu_f + (mu_i - mu_f)*(1 - s/(1.6 * 10**6)), mu_f)
-            for group in optimizer.param_groups:
-                group["lr"] = mu * math.sqrt(1 - 0.999**s)/(1 - 0.9**s)
+            writer.add_image("representation", make_grid(r), engine.state.epoch)
+            writer.add_image("reconstruction", make_grid(x_mu), engine.state.epoch)
 
-            # Anneal pixel variance
-            sigma = max(sigma_f + (sigma_i - sigma_f)*(1 - s/(2 * 10**5)), sigma_f)
+    @trainer.on(Events.EPOCH_COMPLETED)
+    def validate(engine):
+        with torch.no_grad():
+            x, v = next(iter(valid_loader))
+            x, v = x.to(device), v.to(device)
+            x, v, x_q, v_q = partition(x, v)
+
+            # Reconstruction, representation and divergence
+            x_mu, _, kl = model(x, v, x_q, v_q)
+
+            # Validate at last sigma
+            ll = Normal(x_mu, sigma_scheme.recent).log_prob(x_q)
+
+            likelihood = torch.mean(torch.sum(ll, dim=[1, 2, 3]))
+            kl_divergence = torch.mean(torch.sum(kl, dim=[1, 2, 3]))
+
+            # Evidence lower bound
+            elbo = likelihood - kl_divergence
+
+            writer.add_scalar("validation/elbo", elbo.item(), engine.state.epoch)
+            writer.add_scalar("validation/kl", kl_divergence.item(), engine.state.epoch)
+
+    @trainer.on(Events.EXCEPTION_RAISED)
+    def handle_exception(engine, e):
+        writer.close()
+        engine.terminate()
+        if isinstance(e, KeyboardInterrupt) and (engine.state.iteration > 1):
+            import warnings
+            warnings.warn('KeyboardInterrupt caught. Exiting gracefully.')
+            checkpoint_handler(engine, { 'model_exception': model })
+        else: raise e
+
+    trainer.run(train_loader, args.n_epochs)
+    writer.close()

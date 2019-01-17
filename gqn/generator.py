@@ -52,14 +52,14 @@ class Conv2dLSTMCell(nn.Module):
         """
         (hidden, cell) = states
 
-        forget_gate = F.sigmoid(self.forget(input))
-        input_gate  = F.sigmoid(self.input(input))
-        output_gate = F.sigmoid(self.output(input))
-        state_gate  = F.tanh(self.state(input))
+        forget_gate = torch.sigmoid(self.forget(input))
+        input_gate  = torch.sigmoid(self.input(input))
+        output_gate = torch.sigmoid(self.output(input))
+        state_gate  = torch.tanh(self.state(input))
 
         # Update internal cell state
         cell = forget_gate * cell + input_gate * state_gate
-        hidden = output_gate * F.tanh(cell)
+        hidden = output_gate * torch.tanh(cell)
 
         return hidden, cell
 
@@ -75,28 +75,37 @@ class GeneratorNetwork(nn.Module):
     :param r_dim: dimensions of representation
     :param z_dim: latent channels
     :param h_dim: hidden channels in LSTM
-    :param L: Number of refinements of density
+    :param L: number of density refinements
+    :param share: whether to share cores across refinements
     """
-    def __init__(self, x_dim, v_dim, r_dim, z_dim=64, h_dim=128, L=12):
+    def __init__(self, x_dim, v_dim, r_dim, z_dim=64, h_dim=128, L=12, share=True):
         super(GeneratorNetwork, self).__init__()
         self.L = L
         self.z_dim = z_dim
         self.h_dim = h_dim
+        self.share = share
 
         # Core computational units
-        self.inference_core = Conv2dLSTMCell(h_dim + x_dim + v_dim + r_dim, h_dim, kernel_size=5, stride=1, padding=2)
-        self.generator_core = Conv2dLSTMCell(v_dim + r_dim + z_dim, h_dim, kernel_size=5, stride=1, padding=2)
+        kwargs = dict(kernel_size=5, stride=1, padding=2)
+        inference_args = dict(in_channels=v_dim + r_dim + x_dim + h_dim, out_channels=h_dim, **kwargs)
+        generator_args = dict(in_channels=v_dim + r_dim + z_dim, out_channels=h_dim, **kwargs)
+        if self.share:
+            self.inference_core = Conv2dLSTMCell(**inference_args)
+            self.generator_core = Conv2dLSTMCell(**generator_args)
+        else:
+            self.inference_core = nn.ModuleList([Conv2dLSTMCell(**inference_args) for _ in range(L)])
+            self.generator_core = nn.ModuleList([Conv2dLSTMCell(**generator_args) for _ in range(L)])
 
         # Inference, prior
-        self.posterior_density = nn.Conv2d(h_dim, 2*z_dim, kernel_size=5, stride=1, padding=2)
-        self.prior_density     = nn.Conv2d(h_dim, 2*z_dim, kernel_size=5, stride=1, padding=2)
+        self.posterior_density = nn.Conv2d(h_dim, 2*z_dim, **kwargs)
+        self.prior_density     = nn.Conv2d(h_dim, 2*z_dim, **kwargs)
 
         # Generative density
         self.observation_density = nn.Conv2d(h_dim, x_dim, kernel_size=1, stride=1, padding=0)
 
         # Up/down-sampling primitives
-        self.upsample   = nn.ConvTranspose2d(h_dim, h_dim, kernel_size=SCALE, stride=SCALE, padding=0)
-        self.downsample = nn.Conv2d(x_dim, x_dim, kernel_size=SCALE, stride=SCALE, padding=0)
+        self.upsample   = nn.ConvTranspose2d(h_dim, h_dim, kernel_size=SCALE, stride=SCALE, padding=0, bias=False)
+        self.downsample = nn.Conv2d(x_dim, x_dim, kernel_size=SCALE, stride=SCALE, padding=0, bias=False)
 
     def forward(self, x, v, r):
         """
@@ -108,45 +117,46 @@ class GeneratorNetwork(nn.Module):
         :param r: representation for image
         :return reconstruction of x and kl-divergence
         """
-        batch_size, _, h, w = x.size()
+        batch_size, _, h, w = x.shape
         kl = 0
 
-        # Increase dimensions
-        v = v.view(batch_size, -1, 1, 1).repeat(1, 1, h//SCALE, w//SCALE)
-        if r.size(2) != h//SCALE:
-            r = r.repeat(1, 1, h//SCALE, w//SCALE)
+        # Downsample x, upsample v and r
+        x = self.downsample(x)
+        v = v.view(batch_size, -1, 1, 1).repeat(1, 1, h // SCALE, w // SCALE)
+        if r.size(2) != h // SCALE:
+            r = r.repeat(1, 1, h // SCALE, w // SCALE)
 
-        # Reset hidden state
-        hidden_g = x.new_zeros((batch_size, self.h_dim, h//SCALE, w//SCALE))
-        hidden_i = x.new_zeros((batch_size, self.h_dim, h//SCALE, w//SCALE))
+        # Reset hidden and cell state
+        hidden_i = x.new_zeros((batch_size, self.h_dim, h // SCALE, w // SCALE))
+        cell_i   = x.new_zeros((batch_size, self.h_dim, h // SCALE, w // SCALE))
 
-        # Reset cell state
-        cell_g = x.new_zeros((batch_size, self.h_dim, h//SCALE, w//SCALE))
-        cell_i = x.new_zeros((batch_size, self.h_dim, h//SCALE, w//SCALE))
+        hidden_g = x.new_zeros((batch_size, self.h_dim, h // SCALE, w // SCALE))
+        cell_g   = x.new_zeros((batch_size, self.h_dim, h // SCALE, w // SCALE))
 
+        # Canvas for updating
         u = x.new_zeros((batch_size, self.h_dim, h, w))
 
-        x = self.downsample(x)
-
-        for _ in range(self.L):
+        for l in range(self.L):
             # Prior factor (eta π network)
-            o = self.prior_density(hidden_g)
-            p_mu, p_std = torch.split(o, self.z_dim, dim=1)
+            p_mu, p_std = torch.chunk(self.prior_density(hidden_g), 2, dim=1)
             prior_distribution = Normal(p_mu, F.softplus(p_std))
 
             # Inference state update
-            hidden_i, cell_i = self.inference_core(torch.cat([hidden_g, x, v, r], dim=1), [hidden_i, cell_i])
+            inference = self.inference_core if self.share else self.inference_core[l]
+            hidden_i, cell_i = inference(torch.cat([hidden_g, x, v, r], dim=1), [hidden_i, cell_i])
 
             # Posterior factor (eta e network)
-            o = self.posterior_density(hidden_i)
-            q_mu, q_std = torch.split(o, self.z_dim, dim=1)
+            q_mu, q_std = torch.chunk(self.posterior_density(hidden_i), 2, dim=1)
             posterior_distribution = Normal(q_mu, F.softplus(q_std))
 
             # Posterior sample
             z = posterior_distribution.rsample()
 
+            # Generator state update
+            generator = self.generator_core if self.share else self.generator_core[l]
+            hidden_g, cell_g = generator(torch.cat([z, v, r], dim=1), [hidden_g, cell_g])
+
             # Calculate u
-            hidden_g, cell_g = self.generator_core(torch.cat([z, v, r], dim=1), [hidden_g, cell_g])
             u = self.upsample(hidden_g) + u
 
             # Calculate KL-divergence
@@ -154,7 +164,7 @@ class GeneratorNetwork(nn.Module):
 
         x_mu = self.observation_density(u)
 
-        return F.sigmoid(x_mu), kl
+        return torch.sigmoid(x_mu), kl
 
     def sample(self, x_shape, v, r):
         """
@@ -169,19 +179,18 @@ class GeneratorNetwork(nn.Module):
         batch_size = v.size(0)
 
         # Increase dimensions
-        v = v.view(batch_size, -1, 1, 1).repeat(1, 1, h//SCALE, w//SCALE)
-        if r.size(2) != h//SCALE:
-            r = r.repeat(1, 1, h//SCALE, w//SCALE)
+        v = v.view(batch_size, -1, 1, 1).repeat(1, 1, h // SCALE, w // SCALE)
+        if r.size(2) != h // SCALE:
+            r = r.repeat(1, 1, h // SCALE, w // SCALE)
 
         # Reset hidden and cell state for generator
-        hidden_g = v.new_zeros((batch_size, self.h_dim, h//SCALE, w//SCALE))
-        cell_g = v.new_zeros((batch_size, self.h_dim, h//SCALE, w//SCALE))
+        hidden_g = v.new_zeros((batch_size, self.h_dim, h // SCALE, w // SCALE))
+        cell_g = v.new_zeros((batch_size, self.h_dim, h // SCALE, w // SCALE))
 
         u = v.new_zeros((batch_size, self.h_dim, h, w))
 
         for _ in range(self.L):
-            o = self.prior_density(hidden_g)
-            p_mu, p_log_std = torch.split(o, self.z_dim, dim=1)
+            p_mu, p_log_std = torch.chunk(self.prior_density(hidden_g), 2, dim=1)
             prior_distribution = Normal(p_mu, F.softplus(p_log_std))
 
             # Prior sample
@@ -193,4 +202,4 @@ class GeneratorNetwork(nn.Module):
 
         x_mu = self.observation_density(u)
         
-        return F.sigmoid(x_mu)
+        return torch.sigmoid(x_mu)

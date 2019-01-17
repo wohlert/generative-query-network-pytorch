@@ -34,7 +34,7 @@ if __name__ == '__main__':
         ])
         dataset = MNIST(root=args.data_dir, train=True, download=True, transform=transform)
         loss = nn.BCELoss(reduce=False)
-        output_activation = F.sigmoid
+        output_activation = torch.sigmoid
         x_dim, x_shape = 1, (28, 28)
 
     elif args.dataset == "SVHN":

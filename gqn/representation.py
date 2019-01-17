@@ -97,7 +97,7 @@ class PyramidRepresentation(nn.Module):
         :return: representation
         """
         # Increase dimensions
-        batch_size, _, h, w = x.size()
+        batch_size, _, h, w = x.shape
 
         v = v.view(batch_size, -1, 1, 1)
         v = v.repeat(1, 1, h, w)

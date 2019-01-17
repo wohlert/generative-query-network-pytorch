@@ -1,11 +1,6 @@
-import collections, os, io
-from PIL import Image
+import os, gzip
 import torch
-from torchvision.transforms import ToTensor
 from torch.utils.data import Dataset
-
-Context = collections.namedtuple('Context', ['frames', 'cameras'])
-Scene = collections.namedtuple('Scene', ['frames', 'cameras'])
 
 
 def transform_viewpoint(v):
@@ -24,28 +19,42 @@ def transform_viewpoint(v):
 
 
 class ShepardMetzler(Dataset):
-    def __init__(self, root_dir, transform=None, target_transform=None):
-        self.root_dir = root_dir
+    """
+    Shepart Metzler mental rotation task
+    dataset. Based on the dataset provided
+    in the GQN paper. Either 5-parts or
+    7-parts.
+    :param root_dir: location of data on disc
+    :param train: whether to use train of test set
+    :param transform: transform on images
+    :param target_transform: transform on viewpoints
+    """
+    def __init__(self, root_dir, train=True, transform=None, target_transform=transform_viewpoint):
+        super(ShepardMetzler, self).__init__()
+        prefix = "train" if train else "test"
+        self.root_dir = os.path.join(root_dir, prefix)
+        self.records = sorted([p for p in os.listdir(self.root_dir) if "pt" in p])
         self.transform = transform
         self.target_transform = target_transform
 
     def __len__(self):
-        return len(os.listdir(self.root_dir))
+        return len(self.records)
 
     def __getitem__(self, idx):
-        scene_path = os.path.join(self.root_dir, "{}.pt".format(idx))
-        data = torch.load(scene_path)
+        scene_path = os.path.join(self.root_dir, self.records[idx])
 
-        byte_to_tensor = lambda x: ToTensor()(Image.open(io.BytesIO(x)))
+        with gzip.open(scene_path, "r") as f:
+            data = torch.load(f)
 
-        images = torch.stack([byte_to_tensor(frame) for frame in data.frames])
+        images, viewpoints = list(zip(*data))
 
-        viewpoints = torch.from_numpy(data.cameras)
-        viewpoints = viewpoints.view(-1, 5)
-
+        # (b, m, c, h, w)
+        images = torch.FloatTensor(images)
         if self.transform:
             images = self.transform(images)
 
+        # (b, m, 5)
+        viewpoints = torch.FloatTensor(viewpoints)
         if self.target_transform:
             viewpoints = self.target_transform(viewpoints)
 

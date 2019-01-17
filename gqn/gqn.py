@@ -1,10 +1,8 @@
-import random
-
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
 
-from .representation import TowerRepresentation, PyramidRepresentation
+from .representation import TowerRepresentation
 from .generator import GeneratorNetwork
 
 
@@ -27,53 +25,42 @@ class GenerativeQueryNetwork(nn.Module):
 
         self.generator = GeneratorNetwork(x_dim, v_dim, r_dim, z_dim, h_dim, L)
         self.representation = TowerRepresentation(x_dim, v_dim, r_dim, pool=True)
-        #self.representation = PyramidRepresentation(x_dim, v_dim, r_dim)
 
-    def forward(self, images, viewpoints):
+    def forward(self, context_x, context_v, query_x, query_v):
         """
         Forward through the GQN.
 
-        :param images: batch of images [b, m, c, h, w]
-        :param viewpoints: batch of viewpoints for image [b, m, k]
+        :param x: batch of context images [b, m, c, h, w]
+        :param v: batch of context viewpoints for image [b, m, k]
+        :param x_q: batch of query images [b, c, h, w]
+        :param v_q: batch of query viewpoints [b, k]
         """
-        # Number of context datapoints to use for representation
-        batch_size, m, *_ = viewpoints.size()
-
-        # Sample random number of views and generate representation
-        n_views = random.randint(2, m-1)
-
-        indices = torch.randperm(m)
-        representation_idx, query_idx = indices[:n_views], indices[n_views]
-
-        x, v = images[:, representation_idx], viewpoints[:, representation_idx]
-
         # Merge batch and view dimensions.
-        _, _, *x_dims = x.size()
-        _, _, *v_dims = v.size()
+        b, m, *x_dims = context_x.shape
+        _, _, *v_dims = context_v.shape
 
-        x = x.view((-1, *x_dims))
-        v = v.view((-1, *v_dims))
+        x = context_x.view((-1, *x_dims))
+        v = context_v.view((-1, *v_dims))
 
         # representation generated from input images
         # and corresponding viewpoints
         phi = self.representation(x, v)
 
         # Seperate batch and view dimensions
-        _, *phi_dims = phi.size()
-        phi = phi.view((batch_size, n_views, *phi_dims))
+        _, *phi_dims = phi.shape
+        phi = phi.view((b, m, *phi_dims))
 
         # sum over view representations
         r = torch.sum(phi, dim=1)
 
         # Use random (image, viewpoint) pair in batch as query
-        x_q, v_q = images[:, query_idx], viewpoints[:, query_idx]
-        x_mu, kl = self.generator(x_q, v_q, r)
+        x_mu, kl = self.generator(query_x, query_v, r)
 
         # Return reconstruction and query viewpoint
         # for computing error
-        return [x_mu, x_q, r, kl]
+        return (x_mu, r, kl)
 
-    def sample(self, context_x, context_v, viewpoint, sigma):
+    def sample(self, context_x, context_v, query_v, sigma):
         """
         Sample from the network given some context and viewpoint.
 
@@ -82,21 +69,21 @@ class GenerativeQueryNetwork(nn.Module):
         :param viewpoint: viewpoint to generate image from
         :param sigma: pixel variance
         """
-        batch_size, n_views, _, h, w = context_x.size()
+        batch_size, n_views, _, h, w = context_x.shape
         
-        _, _, *x_dims = context_x.size()
-        _, _, *v_dims = context_v.size()
+        _, _, *x_dims = context_x.shape
+        _, _, *v_dims = context_v.shape
 
         x = context_x.view((-1, *x_dims))
         v = context_v.view((-1, *v_dims))
 
         phi = self.representation(x, v)
 
-        _, *phi_dims = phi.size()
+        _, *phi_dims = phi.shape
         phi = phi.view((batch_size, n_views, *phi_dims))
 
         r = torch.sum(phi, dim=1)
 
-        x_mu = self.generator.sample((h, w), viewpoint, r)
+        x_mu = self.generator.sample((h, w), query_v, r)
         x_sample = Normal(x_mu, sigma).sample()
         return x_sample
