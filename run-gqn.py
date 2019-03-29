@@ -67,6 +67,8 @@ if __name__ == '__main__':
     valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=True, **kwargs)
 
     def step(engine, batch):
+        model.train()
+
         x, v = batch
         x, v = x.to(device), v.to(device)
         x, v, x_q, v_q = partition(x, v)
@@ -101,7 +103,10 @@ if __name__ == '__main__':
     # Trainer and metrics
     trainer = Engine(step)
     metric_names = ["elbo", "kl", "sigma", "mu"]
-    metrics = [RunningAverage(output_transform=lambda x: x[m]).attach(trainer, m) for m in metric_names]
+    RunningAverage(output_transform=lambda x: x["elbo"]).attach(trainer, "elbo")
+    RunningAverage(output_transform=lambda x: x["kl"]).attach(trainer, "kl")
+    RunningAverage(output_transform=lambda x: x["sigma"]).attach(trainer, "sigma")
+    RunningAverage(output_transform=lambda x: x["mu"]).attach(trainer, "mu")
     ProgressBar().attach(trainer, metric_names=metric_names)
 
     # Model checkpointing
@@ -142,6 +147,7 @@ if __name__ == '__main__':
 
     @trainer.on(Events.EPOCH_COMPLETED)
     def validate(engine):
+        model.eval()
         with torch.no_grad():
             x, v = next(iter(valid_loader))
             x, v = x.to(device), v.to(device)

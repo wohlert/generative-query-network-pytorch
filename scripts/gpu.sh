@@ -14,4 +14,4 @@ python ../run-gqn.py \
     --log_dir "../logs" \
     --data_parallel "True" \
     --batch_size 1 \
-    --n_workers 6
+    --workers 6

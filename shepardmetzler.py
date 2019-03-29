@@ -49,7 +49,8 @@ class ShepardMetzler(Dataset):
         images, viewpoints = list(zip(*data))
 
         # (b, m, c, h, w)
-        images = torch.FloatTensor(images)
+        images = torch.FloatTensor(images)/255
+        images = images.permute(0, 1, 4, 2, 3)
         if self.transform:
             images = self.transform(images)
 

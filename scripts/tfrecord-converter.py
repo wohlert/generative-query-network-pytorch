@@ -46,7 +46,7 @@ def process(record):
 
         # Convert
         images = tf.map_fn(tf.image.decode_jpeg, tf.reshape(images, [-1]), **kwargs)
-        images = tf.reshape(images, (-1, SEQ_DIM, 3, IMG_DIM, IMG_DIM))
+        images = tf.reshape(images, (-1, SEQ_DIM, IMG_DIM, IMG_DIM, 3))
         poses  = tf.reshape(poses,  (-1, SEQ_DIM, POSE_DIM))
 
         # Numpy conversion
@@ -64,8 +64,8 @@ def convert(record, batch_size):
     batch_process = lambda r: chunk(process(r), batch_size)
 
     for i, batch in enumerate(batch_process(record)):
-        path = os.path.join(path, "{0:}-{1:02}.pt.gz".format(basename, i))
-        with gzip.open(path, 'wb') as f:
+        p = os.path.join(path, "{0:}-{1:02}.pt.gz".format(basename, i))
+        with gzip.open(p, 'wb') as f:
             torch.save(list(batch), f)
 
 if __name__ == '__main__':
