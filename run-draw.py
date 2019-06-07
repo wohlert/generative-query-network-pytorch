@@ -42,7 +42,7 @@ if __name__ == '__main__':
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, **kwargs)
 
     loss = nn.BCELoss(reduce=False).to(device)
-    
+
     for epoch in range(args.epochs):
         for x, _ in tqdm(loader):
             batch_size = x.size(0)
@@ -51,7 +51,7 @@ if __name__ == '__main__':
 
             x_hat, kl_divergence = model(x)
             x_hat = torch.sigmoid(x_hat)
-            
+
             reconstruction = loss(x_hat, x).sum(1)
             kl = kl_divergence.sum(1)
             elbo = torch.mean(reconstruction + kl)
@@ -67,7 +67,10 @@ if __name__ == '__main__':
                 print("Loss at step {}: {}".format(epoch, elbo.item()))
 
                 # Not sustainable if not dataparallel
-                x_sample = model.module.sample(args.batch_size)
+                if type(model) is nn.DataParallel:
+                    x_sample = model.module.sample(args.batch_size)
+                else:
+                    x_sample = model.sample(args.batch_size)
 
                 save_image(x_hat, "reconstruction-{}.jpg".format(epoch))
                 save_image(x_sample, "sample-{}.jpg".format(epoch))
