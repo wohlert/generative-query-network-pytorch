@@ -27,6 +27,7 @@ from ignite.metrics import RunningAverage
 
 from gqn import GenerativeQueryNetwork, partition, Annealer
 from shepardmetzler import ShepardMetzler
+#from placeholder import PlaceholderData as ShepardMetzler
 
 cuda = torch.cuda.is_available()
 device = torch.device("cuda:0" if cuda else "cpu")

@@ -42,6 +42,8 @@ class Conv2dLSTMCell(nn.Module):
         self.output = nn.Conv2d(in_channels, out_channels, **kwargs)
         self.state  = nn.Conv2d(in_channels, out_channels, **kwargs)
 
+        self.transform = nn.Conv2d(out_channels, in_channels, **kwargs)
+
     def forward(self, input, states):
         """
         Send input through the cell.
@@ -51,6 +53,8 @@ class Conv2dLSTMCell(nn.Module):
         :return new (hidden, cell) pair
         """
         (hidden, cell) = states
+
+        input = input + self.transform(hidden)
 
         forget_gate = torch.sigmoid(self.forget(input))
         input_gate  = torch.sigmoid(self.input(input))
