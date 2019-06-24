@@ -1,3 +1,5 @@
+**Update 2019/06/24**: A model trained on 10% of the Shepard-Metzler dataset has been added, the following notebook explains the main features of this model: [nbviewer](https://nbviewer.jupyter.org/github/wohlert/generative-query-network-pytorch/blob/master/mental-rotation.ipynb)
+
 # Generative Query Network
 
 This is a PyTorch implementation of the Generative Query Network (GQN)
@@ -24,7 +26,7 @@ sh scripts/gpu.sh data-dir
 
 The implementation shown in this repository consists of all of the
 representation architectures described in the paper along with the
-generative model that is similar to the one described in 
+generative model that is similar to the one described in
 "Towards conceptual compression" by Gregor et al.
 
 Additionally, this repository also contains implementations of the **DRAW
