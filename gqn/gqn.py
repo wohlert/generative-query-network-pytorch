@@ -70,7 +70,7 @@ class GenerativeQueryNetwork(nn.Module):
         :param sigma: pixel variance
         """
         batch_size, n_views, _, h, w = context_x.shape
-        
+
         _, _, *x_dims = context_x.shape
         _, _, *v_dims = context_v.shape
 
@@ -85,5 +85,4 @@ class GenerativeQueryNetwork(nn.Module):
         r = torch.sum(phi, dim=1)
 
         x_mu = self.generator.sample((h, w), query_v, r)
-        x_sample = Normal(x_mu, sigma).sample()
-        return x_sample
+        return x_mu
